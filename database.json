@@ -1,0 +1,26 @@
+{
+  "users": {},
+  "guilds": {},
+  "shop": {
+    "common": {
+      "price": 100,
+      "stock": 999
+    },
+    "uncommon": {
+      "price": 300,
+      "stock": 999
+    },
+    "rare": {
+      "price": 500,
+      "stock": 999
+    },
+    "epic": {
+      "price": 1000,
+      "stock": 999
+    },
+    "legendary": {
+      "price": 2500,
+      "stock": 999
+    }
+  }
+}
