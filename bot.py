@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput
+from discord.ui import Button, View
 import json
 import random
 import asyncio
@@ -10,10 +10,10 @@ import os
 import requests
 
 # Bot ayarları
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'SENIN_BOT_TOKENIN')
-OWNER_ID = int(os.getenv('OWNER_ID', 123456789))
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_TOKEN')
+OWNER_ID = int(os.getenv('OWNER_ID', 1480666761438429447))
 MAX_ALL_BET = 250000
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')  # PHP paneli ile iletişim için
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='.', intents=intents, help_command=None)
@@ -41,9 +41,10 @@ def create_default_db():
             "legendary": {"price": 2500, "stock": 999}
         },
         "daily_quests": {},
-        "invites": {},  # Davet takibi için
-        "giveaways": {},  # Çekilişler için
-        "events": {}  # Etkinlikler için
+        "invites": {},
+        "giveaways": {},
+        "events": {},
+        "lotteries": {}
     }
 
 db = load_database()
@@ -56,8 +57,9 @@ def save_db():
         print(f"Database kaydedilirken hata: {e}")
 
 def get_user_data(user_id):
-    if str(user_id) not in db["users"]:
-        db["users"][str(user_id)] = {
+    user_id = str(user_id)
+    if user_id not in db["users"]:
+        db["users"][user_id] = {
             "cowoncy": 1000,
             "bank": 0,
             "animals": [],
@@ -74,11 +76,11 @@ def get_user_data(user_id):
             "total_xp": 0,
             "message_count": 0,
             "quest": None,
-            "invites": 0,  # Toplam davet
-            "invite_claimed": 0  # Toplanan davet ödülleri
+            "invites": 0,
+            "invite_claimed": 0
         }
         save_db()
-    return db["users"][str(user_id)]
+    return db["users"][user_id]
 
 def get_level_xp(level):
     return level * 100
@@ -157,465 +159,397 @@ def sync_invites_to_panel(user_id, invite_count):
 @bot.event
 async def on_member_join(member):
     """Yeni üye katıldığında davet edeni bul"""
-    # Davet eden kişiyi bul
-    invites = await member.guild.invites()
-    
-    # Bu sunucu için davet sayılarını tut
-    if str(member.guild.id) not in db["guilds"]:
-        db["guilds"][str(member.guild.id)] = {"invites": {}}
-    
-    guild_data = db["guilds"][str(member.guild.id)]
-    invite_data = guild_data.get("invites", {})
-    
-    # Son davetleri kontrol et
-    for invite in invites:
-        invite_id = str(invite.id)
-        if invite_id not in invite_data:
-            invite_data[invite_id] = {
-                "inviter_id": str(invite.inviter.id),
-                "uses": invite.uses
-            }
-        else:
-            # Davet kullanımı arttıysa
-            old_uses = invite_data[invite_id]["uses"]
-            if invite.uses > old_uses:
-                inviter_id = int(invite_data[invite_id]["inviter_id"])
-                user_data = get_user_data(inviter_id)
-                user_data["invites"] += 1
-                save_db()
-                
-                # PHP paneline gönder
-                sync_invites_to_panel(inviter_id, user_data["invites"])
-                
-                # Davet edene tebrik mesajı
-                try:
-                    inviter = await bot.fetch_user(inviter_id)
-                    await member.guild.get_channel(member.guild.system_channel.id).send(
-                        f"🎉 {inviter.mention} davetiyle {member.mention} sunucuya katıldı! ({user_data['invites']} davet)"
-                    )
-                except:
-                    pass
-                
-                # Davet sayısını güncelle
-                invite_data[invite_id]["uses"] = invite.uses
-                break
-    
-    db["guilds"][str(member.guild.id)]["invites"] = invite_data
-    save_db()
-
-# ==================== ÖDÜL TALEP SİSTEMİ ====================
-@bot.command(name="ödültalep", aliases=["odultalep", "claimreward"])
-async def claim_reward(ctx):
-    """Davet ödülünü talep et"""
-    user_data = get_user_data(ctx.author.id)
-    invites = user_data["invites"]
-    claimed = user_data["invite_claimed"]
-    
-    # Talep edilebilecek davet sayısı
-    available = invites - claimed
-    
-    if available <= 0:
-        await ctx.send(f"❌ **{ctx.author.display_name}**, talep edebileceğin ödül yok! (Toplam davetin: {invites})")
-        return
-    
-    # Her davet için ödül hesapla (10-50 cowoncy arası)
-    reward_per_invite = min(50, 10 + (user_data["level"] // 5))
-    total_reward = available * reward_per_invite
-    
-    # Ödülü ver
-    user_data["cowoncy"] += total_reward
-    user_data["invite_claimed"] = invites
-    add_xp(ctx.author.id, total_reward // 10)
-    save_db()
-    
-    # PHP paneline güncelleme gönder
-    sync_invites_to_panel(ctx.author.id, invites)
-    
-    embed = discord.Embed(
-        title="🎉 Ödül Talep Edildi!",
-        description=f"**{ctx.author.display_name}** ödülünü aldı!",
-        color=0x00ff00
-    )
-    embed.add_field(name="📊 Talep Edilen Davet", value=f"{available} davet", inline=True)
-    embed.add_field(name="💰 Kazanılan Cowoncy", value=f"+{total_reward}", inline=True)
-    embed.add_field(name="⭐ Kazanılan XP", value=f"+{total_reward // 10}", inline=True)
-    embed.add_field(name="📈 Toplam Davet", value=f"{invites}", inline=True)
-    embed.set_footer(text="Her 1 davet = 10-50 cowoncy | Seviyene göre artar!")
-    
-    await ctx.send(embed=embed)
-
-# ==================== ÇEKİLİŞ KOMUTLARI ====================
-@bot.command(name="cekilisbaslat", aliases=["cekilis-baslat"])
-@commands.has_permissions(administrator=True)
-async def start_giveaway(ctx, prize: str, duration: str = None):
-    """Çekiliş başlat: .cekilisbaslat <ödül> <süre>"""
-    if not duration:
-        await ctx.send("❌ Lütfen süre belirtin! Örnek: `.cekilisbaslat 1000 cowoncy 10m`")
-        return
-    
-    # Süreyi çözümle
-    time_seconds = 0
-    if duration.endswith('s'):
-        time_seconds = int(duration[:-1])
-    elif duration.endswith('m'):
-        time_seconds = int(duration[:-1]) * 60
-    elif duration.endswith('h'):
-        time_seconds = int(duration[:-1]) * 3600
-    elif duration.endswith('d'):
-        time_seconds = int(duration[:-1]) * 86400
-    else:
-        try:
-            time_seconds = int(duration)
-        except:
-            await ctx.send("❌ Geçersiz süre! Örnek: `10m`, `1h`, `30s`")
-            return
-    
-    if time_seconds < 10:
-        await ctx.send("❌ Süre en az 10 saniye olmalı!")
-        return
-    
-    # Çekiliş ID'si oluştur
-    giveaway_id = f"{ctx.guild.id}_{ctx.channel.id}_{int(datetime.now().timestamp())}"
-    
-    # Çekilişi veritabanına kaydet
-    db["giveaways"][giveaway_id] = {
-        "guild_id": ctx.guild.id,
-        "channel_id": ctx.channel.id,
-        "message_id": None,
-        "prize": prize,
-        "duration": time_seconds,
-        "start_time": datetime.now().isoformat(),
-        "end_time": (datetime.now() + timedelta(seconds=time_seconds)).isoformat(),
-        "host": ctx.author.id,
-        "participants": [],
-        "winner": None,
-        "ended": False
-    }
-    save_db()
-    
-    # Embed oluştur
-    embed = discord.Embed(
-        title="🎉 Çekiliş Başladı!",
-        description=f"**Ödül:** {prize}\n**Katılmak için:** 🎲 tıklayın!",
-        color=0xffd700
-    )
-    embed.add_field(name="⏱️ Süre", value=f"{time_seconds // 60}m {time_seconds % 60}s", inline=True)
-    embed.add_field(name="👤 Başlatan", value=ctx.author.mention, inline=True)
-    embed.add_field(name="📊 Katılımcı", value="0", inline=True)
-    embed.set_footer(text=f"ID: {giveaway_id[:8]}")
-    
-    # Buton ekle
-    view = GiveawayView(giveaway_id, ctx)
-    message = await ctx.send(embed=embed, view=view)
-    
-    # Mesaj ID'sini kaydet
-    db["giveaways"][giveaway_id]["message_id"] = message.id
-    save_db()
-    
-    # Zamanlayıcı başlat
-    await schedule_giveaway_end(giveaway_id)
-
-class GiveawayView(View):
-    def __init__(self, giveaway_id, ctx):
-        super().__init__(timeout=None)
-        self.giveaway_id = giveaway_id
-        self.ctx = ctx
-    
-    @discord.ui.button(label="🎲 Katıl", style=discord.ButtonStyle.success)
-    async def join_button(self, interaction: discord.Interaction, button: Button):
-        giveaway = db["giveaways"].get(self.giveaway_id)
-        if not giveaway or giveaway["ended"]:
-            await interaction.response.send_message("❌ Bu çekiliş sona ermiş!", ephemeral=True)
-            return
-        
-        user_id = str(interaction.user.id)
-        if user_id in giveaway["participants"]:
-            await interaction.response.send_message("❌ Zaten katıldın!", ephemeral=True)
-            return
-        
-        giveaway["participants"].append(user_id)
-        save_db()
-        
-        # Embed'i güncelle
-        embed = interaction.message.embeds[0]
-        embed.set_field_at(2, name="📊 Katılımcı", value=str(len(giveaway["participants"])), inline=True)
-        await interaction.message.edit(embed=embed)
-        
-        await interaction.response.send_message("🎉 Çekilişe katıldın! İyi şanslar!", ephemeral=True)
-
-async def schedule_giveaway_end(giveaway_id):
-    """Çekiliş bitişini zamanla"""
-    giveaway = db["giveaways"].get(giveaway_id)
-    if not giveaway:
-        return
-    
-    end_time = datetime.fromisoformat(giveaway["end_time"])
-    wait_time = (end_time - datetime.now()).total_seconds()
-    
-    if wait_time > 0:
-        await asyncio.sleep(wait_time)
-    
-    # Çekilişi sonlandır
-    await end_giveaway(giveaway_id)
-
-async def end_giveaway(giveaway_id):
-    """Çekilişi sonlandır ve kazananı seç"""
-    giveaway = db["giveaways"].get(giveaway_id)
-    if not giveaway or giveaway["ended"]:
-        return
-    
-    giveaway["ended"] = True
-    participants = giveaway["participants"]
-    
-    # Kanala mesaj gönder
     try:
-        channel = bot.get_channel(giveaway["channel_id"])
-        message = await channel.fetch_message(giveaway["message_id"])
-    except:
-        return
-    
-    if participants:
-        winner_id = random.choice(participants)
-        giveaway["winner"] = winner_id
-        save_db()
+        invites = await member.guild.invites()
         
-        try:
-            winner = await bot.fetch_user(int(winner_id))
-            prize = giveaway["prize"]
-            
-            embed = discord.Embed(
-                title="🎉 Çekiliş Sona Erdi!",
-                description=f"**Kazanan:** {winner.mention}\n**Ödül:** {prize}",
-                color=0xffd700
-            )
-            embed.add_field(name="📊 Toplam Katılımcı", value=len(participants), inline=True)
-            
-            await message.edit(embed=embed, view=None)
-            await channel.send(f"🎊 Tebrikler {winner.mention}! **{prize}** kazandın! 🎊")
-            
-            # Kazanana ödülü ver
-            user_data = get_user_data(winner.id)
-            if "cowoncy" in prize.lower():
-                try:
-                    amount = int(''.join(filter(str.isdigit, prize)))
-                    user_data["cowoncy"] += amount
+        if str(member.guild.id) not in db["guilds"]:
+            db["guilds"][str(member.guild.id)] = {"invites": {}}
+        
+        guild_data = db["guilds"][str(member.guild.id)]
+        invite_data = guild_data.get("invites", {})
+        
+        for invite in invites:
+            invite_id = str(invite.id)
+            if invite_id not in invite_data:
+                invite_data[invite_id] = {
+                    "inviter_id": str(invite.inviter.id),
+                    "uses": invite.uses
+                }
+            else:
+                old_uses = invite_data[invite_id]["uses"]
+                if invite.uses > old_uses:
+                    inviter_id = int(invite_data[invite_id]["inviter_id"])
+                    user_data = get_user_data(inviter_id)
+                    user_data["invites"] += 1
                     save_db()
-                except:
-                    pass
-            
-        except Exception as e:
-            print(f"Kazanan bildirilirken hata: {e}")
-    else:
-        embed = discord.Embed(
-            title="😔 Çekiliş Sona Erdi",
-            description="Katılımcı olmadığı için kazanan seçilemedi!",
-            color=0xff0000
-        )
-        await message.edit(embed=embed, view=None)
-
-# ==================== ETKİNLİK KOMUTLARI ====================
-@bot.command(name="etkinlikbaslat", aliases=["etkinlik-baslat"])
-@commands.has_permissions(administrator=True)
-async def start_event(ctx, cowoncy_reward: int, invite_requirement: int):
-    """Etkinlik başlat: .etkinlikbaslat <cowoncy> <invite>"""
-    if cowoncy_reward < 1 or invite_requirement < 1:
-        await ctx.send("❌ Ödül ve davet sayısı 1'den büyük olmalı!")
-        return
-    
-    event_id = f"event_{ctx.guild.id}_{int(datetime.now().timestamp())}"
-    
-    db["events"][event_id] = {
-        "guild_id": ctx.guild.id,
-        "channel_id": ctx.channel.id,
-        "cowoncy_reward": cowoncy_reward,
-        "invite_requirement": invite_requirement,
-        "start_time": datetime.now().isoformat(),
-        "ended": False,
-        "completed": []
-    }
-    save_db()
-    
-    embed = discord.Embed(
-        title="🎯 Yeni Etkinlik Başladı!",
-        description=f"**{invite_requirement}** davet yapan herkese **{cowoncy_reward}** cowoncy!",
-        color=0x00ff00
-    )
-    embed.add_field(name="💰 Ödül", value=f"{cowoncy_reward} cowoncy", inline=True)
-    embed.add_field(name="🎯 Hedef", value=f"{invite_requirement} davet", inline=True)
-    embed.set_footer(text="Davetleri topla ve ödülü kaçırma!")
-    
-    await ctx.send(embed=embed)
-    
-    # Otomatik kontrol başlat
-    asyncio.create_task(auto_check_event(event_id))
-
-async def auto_check_event(event_id):
-    """Etkinlik katılımcılarını otomatik kontrol et"""
-    event = db["events"].get(event_id)
-    if not event:
-        return
-    
-    while not event["ended"]:
-        await asyncio.sleep(60)  # Her dakika kontrol et
+                    
+                    sync_invites_to_panel(inviter_id, user_data["invites"])
+                    
+                    try:
+                        inviter = await bot.fetch_user(inviter_id)
+                        channel = member.guild.system_channel
+                        if channel:
+                            await channel.send(
+                                f"🎉 {inviter.mention} davetiyle {member.mention} sunucuya katıldı! ({user_data['invites']} davet)"
+                            )
+                    except:
+                        pass
+                    
+                    invite_data[invite_id]["uses"] = invite.uses
+                    break
         
-        for user_id, user_data in db["users"].items():
-            if user_id in event["completed"]:
-                continue
-            
-            if user_data.get("invites", 0) >= event["invite_requirement"]:
-                # Ödülü ver
-                user_data["cowoncy"] += event["cowoncy_reward"]
-                add_xp(int(user_id), event["cowoncy_reward"] // 10)
-                event["completed"].append(user_id)
-                save_db()
-                
-                # Bildirim gönder
-                try:
-                    channel = bot.get_channel(event["channel_id"])
-                    user = await bot.fetch_user(int(user_id))
-                    await channel.send(
-                        f"🎉 {user.mention} etkinlik ödülünü kazandı! "
-                        f"**{event['cowoncy_reward']}** cowoncy cüzdanına eklendi!"
-                    )
-                except:
-                    pass
+        db["guilds"][str(member.guild.id)]["invites"] = invite_data
+        save_db()
+    except Exception as e:
+        print(f"Davet takip hatası: {e}")
 
-# ==================== PİYANGO KOMUTLARI ====================
-@bot.command(name="piyangobaslat", aliases=["piyango-baslat"])
-@commands.has_permissions(administrator=True)
-async def start_lottery(ctx, prize_amount: int):
-    """Piyango başlat: .piyangobaslat <ödül-miktarı>"""
-    if prize_amount < 100:
-        await ctx.send("❌ Ödül en az 100 cowoncy olmalı!")
+# ==================== BLACKJACK ====================
+class BlackjackView(View):
+    def __init__(self, ctx, bet, player_cards, dealer_cards):
+        super().__init__(timeout=30)
+        self.ctx = ctx
+        self.bet = bet
+        self.player_cards = player_cards
+        self.dealer_cards = dealer_cards
+        self.player_total = sum(player_cards)
+        self.dealer_total = sum(dealer_cards)
+        self.game_over = False
+        self.message = None
+        
+    async def update_message(self, content, buttons=True):
+        embed = discord.Embed(
+            title="🃏 Blackjack",
+            description=content,
+            color=0x00ff00
+        )
+        embed.add_field(name="💰 Bahis", value=f"{self.bet} cowoncy", inline=True)
+        embed.add_field(name="👤 Elin", value=f"{self.player_cards} = **{self.player_total}**", inline=True)
+        embed.add_field(name="🤖 Kasa", value=f"{self.dealer_cards} = **{self.dealer_total}**", inline=True)
+        
+        if buttons:
+            await self.message.edit(embed=embed, view=self)
+        else:
+            await self.message.edit(embed=embed, view=None)
+    
+    @discord.ui.button(label="Hit 🃏", style=discord.ButtonStyle.green)
+    async def hit_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("❌ Bu senin oyunun değil!", ephemeral=True)
+            return
+        
+        if self.game_over:
+            await interaction.response.send_message("❌ Oyun bitti!", ephemeral=True)
+            return
+        
+        new_card = random.randint(1, 11)
+        self.player_cards.append(new_card)
+        self.player_total = sum(self.player_cards)
+        
+        if self.player_total > 21:
+            self.game_over = True
+            user_data = get_user_data(self.ctx.author.id)
+            user_data["cowoncy"] -= self.bet
+            save_db()
+            await self.update_message(f"💥 **BUSTED!** {self.player_total} ile kaybettin!\n{self.bet} cowoncy kaybettin.", False)
+            await interaction.response.defer()
+            self.stop()
+        elif self.player_total == 21:
+            self.game_over = True
+            win = int(self.bet * 1.5)
+            user_data = get_user_data(self.ctx.author.id)
+            user_data["cowoncy"] += win
+            add_xp(self.ctx.author.id, win // 10)
+            save_db()
+            await self.update_message(f"🎉 **BLACKJACK!** {win} cowoncy kazandın!", False)
+            await interaction.response.defer()
+            self.stop()
+        else:
+            await self.update_message(f"🎯 Yeni kart: {new_card}\nToplam: {self.player_total}")
+            await interaction.response.defer()
+    
+    @discord.ui.button(label="Stand ✋", style=discord.ButtonStyle.red)
+    async def stand_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("❌ Bu senin oyunun değil!", ephemeral=True)
+            return
+        
+        if self.game_over:
+            await interaction.response.send_message("❌ Oyun bitti!", ephemeral=True)
+            return
+        
+        self.game_over = True
+        
+        while self.dealer_total < 17:
+            new_card = random.randint(1, 11)
+            self.dealer_cards.append(new_card)
+            self.dealer_total = sum(self.dealer_cards)
+        
+        user_data = get_user_data(self.ctx.author.id)
+        
+        if self.dealer_total > 21 or self.player_total > self.dealer_total:
+            user_data["cowoncy"] += self.bet
+            add_xp(self.ctx.author.id, self.bet // 15)
+            save_db()
+            await self.update_message(f"🎉 **KAZANDIN!** {self.bet} cowoncy kazandın!", False)
+        elif self.player_total == self.dealer_total:
+            save_db()
+            await self.update_message(f"🤝 **BERABERE!** Bahsin geri iade.", False)
+        else:
+            user_data["cowoncy"] -= self.bet
+            save_db()
+            await self.update_message(f"💔 **KAYBETTİN!** {self.bet} cowoncy kaybettin.", False)
+        
+        await interaction.response.defer()
+        self.stop()
+
+@bot.command(name="bj", aliases=["blackjack"])
+async def blackjack_command(ctx, bet_input=None):
+    if bet_input is None:
+        await ctx.send("❌ Please specify a bet amount! Example: `.bj 100` or `.bj all`")
         return
     
-    # Piyango ID'si
-    lottery_id = f"lottery_{ctx.guild.id}_{int(datetime.now().timestamp())}"
-    
-    db["daily_quests"][lottery_id] = {
-        "type": "lottery",
-        "guild_id": ctx.guild.id,
-        "channel_id": ctx.channel.id,
-        "prize": prize_amount,
-        "ticket_price": 10,
-        "tickets": {},
-        "start_time": datetime.now().isoformat(),
-        "end_time": (datetime.now() + timedelta(minutes=10)).isoformat(),
-        "ended": False,
-        "winner": None
-    }
-    save_db()
-    
-    embed = discord.Embed(
-        title="🎰 Piyango Başladı!",
-        description=f"**Toplam Ödül:** {prize_amount} cowoncy\n**Bilet Fiyatı:** 10 cowoncy\n\nKatılmak için `.biletal` yaz!",
-        color=0xffd700
-    )
-    embed.add_field(name="⏱️ Süre", value="10 dakika", inline=True)
-    embed.add_field(name="🎟️ Toplam Bilet", value="0", inline=True)
-    embed.set_footer(text="Piyango 10 dakika sonra sona erecek")
-    
-    await ctx.send(embed=embed)
-    
-    # Otomatik sonlandırma
-    asyncio.create_task(end_lottery(lottery_id))
-
-@bot.command(name="biletal")
-async def buy_ticket(ctx):
-    """Piyango bileti al"""
-    # Aktif piyangoyu bul
-    active_lottery = None
-    lottery_id = None
-    
-    for lid, lottery in db["daily_quests"].items():
-        if (lottery["type"] == "lottery" and 
-            not lottery["ended"] and 
-            lottery["guild_id"] == ctx.guild.id):
-            active_lottery = lottery
-            lottery_id = lid
-            break
-    
-    if not active_lottery:
-        await ctx.send("❌ Şu anda aktif piyango yok!")
+    can_use, remaining = check_cooldown(ctx.author.id, "bj", 1)
+    if not can_use:
+        await ctx.send(f"❌ **{ctx.author.display_name}**! Slow down and try the command again in {remaining} seconds.")
         return
     
     user_data = get_user_data(ctx.author.id)
-    ticket_price = active_lottery["ticket_price"]
-    
-    if user_data["cowoncy"] < ticket_price:
-        await ctx.send(f"❌ Yeterli cowoncyin yok! ({ticket_price} cowoncy gerekli)")
+    bet, error = parse_bet(ctx, bet_input)
+    if error:
+        await ctx.send(error)
         return
     
-    # Bilet al
-    user_id = str(ctx.author.id)
-    if user_id not in active_lottery["tickets"]:
-        active_lottery["tickets"][user_id] = 0
+    if bet < 1:
+        await ctx.send("❌ You must bet at least 1 cowoncy!")
+        return
     
-    active_lottery["tickets"][user_id] += 1
-    user_data["cowoncy"] -= ticket_price
+    player_cards = [random.randint(1, 11), random.randint(1, 11)]
+    dealer_cards = [random.randint(1, 11), random.randint(1, 11)]
+    
+    view = BlackjackView(ctx, bet, player_cards, dealer_cards)
+    
+    embed = discord.Embed(
+        title="🃏 Blackjack",
+        description="🎯 Oyun başladı! Hit mi Stand mı?",
+        color=0x00ff00
+    )
+    embed.add_field(name="💰 Bahis", value=f"{bet} cowoncy", inline=True)
+    embed.add_field(name="👤 Elin", value=f"{player_cards} = **{sum(player_cards)}**", inline=True)
+    embed.add_field(name="🤖 Kasa", value=f"{[dealer_cards[0], '?']} = **{dealer_cards[0]}+?**", inline=True)
+    
+    view.message = await ctx.send(embed=embed, view=view)
+
+# ==================== COINFLIP ====================
+@bot.command(name="cf", aliases=["coinflip"])
+async def coinflip_command(ctx, choice: str = None, bet_input: str = None):
+    if choice is None or bet_input is None:
+        await ctx.send("❌ Please specify choice and bet! Example: `.cf yazı 100` or `.cf tura all`")
+        return
+    
+    if choice.lower() not in ["yazı", "tura", "heads", "tails"]:
+        await ctx.send("❌ Please choose 'yazı' or 'tura'!")
+        return
+    
+    can_use, remaining = check_cooldown(ctx.author.id, "cf", 1)
+    if not can_use:
+        await ctx.send(f"❌ **{ctx.author.display_name}**! Slow down and try the command again in {remaining} seconds.")
+        return
+    
+    user_data = get_user_data(ctx.author.id)
+    bet, error = parse_bet(ctx, bet_input)
+    if error:
+        await ctx.send(error)
+        return
+    
+    if bet < 1:
+        await ctx.send("❌ You must bet at least 1 cowoncy!")
+        return
+    
+    user_choice = "yazı" if choice.lower() in ["yazı", "heads"] else "tura"
+    msg = await ctx.send(f"**{ctx.author.display_name}** spent **{bet}** and chose **{user_choice}**\nThe coin spins...")
+    
+    await asyncio.sleep(1.5)
+    
+    result = random.choice(["yazı", "tura"])
+    
+    if result == user_choice:
+        win = bet * 2
+        user_data["cowoncy"] += win
+        add_xp(ctx.author.id, win // 20)
+        save_db()
+        await msg.edit(content=f"**{ctx.author.display_name}** spent **{bet}** and chose **{user_choice}**\nThe coin spins...\n\nIt's **{result}**! You won **{win}** cowoncy!")
+    else:
+        user_data["cowoncy"] -= bet
+        add_xp(ctx.author.id, max(1, bet // 30))
+        save_db()
+        await msg.edit(content=f"**{ctx.author.display_name}** spent **{bet}** and chose **{user_choice}**\nThe coin spins...\n\nIt's **{result}**! You lost **{bet}** cowoncy.")
+
+# ==================== SLOTS ====================
+@bot.command(name="slots")
+async def slots_command(ctx, bet_input: str = None):
+    if bet_input is None:
+        await ctx.send("❌ Please specify a bet amount! Example: `.slots 100` or `.slots all`")
+        return
+    
+    can_use, remaining = check_cooldown(ctx.author.id, "slots", 1)
+    if not can_use:
+        await ctx.send(f"❌ **{ctx.author.display_name}**! Slow down and try the command again in {remaining} seconds.")
+        return
+    
+    user_data = get_user_data(ctx.author.id)
+    bet, error = parse_bet(ctx, bet_input)
+    if error:
+        await ctx.send(error)
+        return
+    
+    if bet < 1:
+        await ctx.send("❌ You must bet at least 1 cowoncy!")
+        return
+    
+    symbols = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐"]
+    result = [random.choice(symbols) for _ in range(3)]
+    
+    msg = await ctx.send(f"**{ctx.author.display_name}** bet 🎉 **{bet}**\n\n{result[0]} {result[1]} {result[2]}\n\n...")
+    
+    await asyncio.sleep(1.5)
+    
+    if result[0] == result[1] == result[2]:
+        multiplier = 10 if result[0] == "💎" else 5 if result[0] == "⭐" else 3
+        win = bet * multiplier
+        user_data["cowoncy"] += win
+        xp_gain = win // 10
+        add_xp(ctx.author.id, xp_gain)
+        save_db()
+        await msg.edit(content=f"**{ctx.author.display_name}** bet 🎉 **{bet}**\n\n{result[0]} {result[1]} {result[2]}\n\nJACKPOT! You won **{win}** cowoncy! 🎉")
+    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+        win = bet * 2
+        user_data["cowoncy"] += win
+        xp_gain = win // 20
+        add_xp(ctx.author.id, xp_gain)
+        save_db()
+        await msg.edit(content=f"**{ctx.author.display_name}** bet 🎉 **{bet}**\n\n{result[0]} {result[1]} {result[2]}\n\nTwo of a kind! You won **{win}** cowoncy!")
+    else:
+        user_data["cowoncy"] -= bet
+        xp_gain = bet // 30
+        add_xp(ctx.author.id, max(1, xp_gain))
+        save_db()
+        await msg.edit(content=f"**{ctx.author.display_name}** bet 🎉 **{bet}**\n\n{result[0]} {result[1]} {result[2]}\n\nYou lost **{bet}** cowoncy!")
+
+# ==================== DAILY ====================
+@bot.command(name="daily")
+async def daily_reward(ctx):
+    user_data = get_user_data(ctx.author.id)
+    
+    can_use, remaining = check_cooldown(ctx.author.id, "daily", 86400)
+    if not can_use:
+        hours = remaining // 3600
+        minutes = (remaining % 3600) // 60
+        await ctx.send(f"❌ **{ctx.author.display_name}**, you have already claimed your daily! Next daily in: **{hours}H {minutes}M**")
+        return
+    
+    if user_data["last_daily"]:
+        last = datetime.fromisoformat(user_data["last_daily"])
+        now = datetime.now()
+        if (now - last).days == 1:
+            user_data["daily_streak"] += 1
+        else:
+            user_data["daily_streak"] = 0
+    else:
+        user_data["daily_streak"] = 0
+    
+    level = user_data["level"]
+    base_reward = 200 + (level * 50)
+    streak_bonus = min(user_data["daily_streak"] * 50, 500)
+    total_reward = base_reward + streak_bonus
+    
+    user_data["cowoncy"] += total_reward
+    user_data["last_daily"] = datetime.now().isoformat()
+    user_data["daily_streak"] += 1 if user_data["daily_streak"] == 0 else 0
+    
+    if user_data["daily_streak"] % 5 == 0:
+        user_data["weapon_crates"] += 1
+        crate_msg = "\n🎉 You received a weapon crate!"
+    else:
+        crate_msg = ""
+    
+    xp_gain = 50 + (level * 5)
+    add_xp(ctx.author.id, xp_gain)
     save_db()
     
-    # Toplam bilet sayısını güncelle
-    total_tickets = sum(active_lottery["tickets"].values())
-    
-    # Embed'i güncelle
-    try:
-        channel = bot.get_channel(active_lottery["channel_id"])
-        async for msg in channel.history(limit=10):
-            if msg.embeds and "Piyango Başladı!" in msg.embeds[0].title:
-                embed = msg.embeds[0]
-                embed.set_field_at(1, name="🎟️ Toplam Bilet", value=str(total_tickets), inline=True)
-                await msg.edit(embed=embed)
-                break
-    except:
-        pass
-    
-    await ctx.send(f"✅ **{ctx.author.display_name}** {ticket_price} cowoncy karşılığında 1 bilet aldı! (Toplam biletin: {active_lottery['tickets'][user_id]})")
+    await ctx.send(f"🎉 **{ctx.author.display_name}**, here is your daily 🎉 **{total_reward}** Cowoncy!\n🎉 You're on a **{user_data['daily_streak']}** daily streak!{crate_msg}")
 
-async def end_lottery(lottery_id):
-    """Piyangoyu sonlandır"""
-    await asyncio.sleep(600)  # 10 dakika
+# ==================== CASH ====================
+@bot.command(name="cash", aliases=["money", "balance", "bal", "cüzdan"])
+async def cash_command(ctx, member: discord.Member = None):
+    if member is None:
+        member = ctx.author
     
-    lottery = db["daily_quests"].get(lottery_id)
-    if not lottery or lottery["ended"]:
+    user_data = get_user_data(member.id)
+    
+    embed = discord.Embed(
+        title=f"💰 {member.display_name}'s Wallet",
+        color=0x00ff00
+    )
+    embed.add_field(name="💵 Cowoncy", value=f"{user_data['cowoncy']:,}", inline=True)
+    embed.add_field(name="🏦 Bank", value=f"{user_data['bank']:,}", inline=True)
+    embed.add_field(name="💎 Total", value=f"{user_data['cowoncy'] + user_data['bank']:,}", inline=True)
+    embed.add_field(name="📦 Weapon Crates", value=user_data["weapon_crates"], inline=True)
+    embed.add_field(name="🎯 Davet", value=user_data.get("invites", 0), inline=True)
+    embed.set_footer(text=f"Level {user_data['level']} | XP: {user_data['xp']}/{get_level_xp(user_data['level'])}")
+    
+    await ctx.send(embed=embed)
+
+# ==================== GIVE ====================
+@bot.command(name="give")
+async def give_money(ctx, member: discord.Member, amount: int):
+    if amount < 1:
+        await ctx.send("❌ You must give at least 1 cowoncy!")
         return
     
-    lottery["ended"] = True
+    giver_data = get_user_data(ctx.author.id)
+    receiver_data = get_user_data(member.id)
     
-    # Kazananı seç
-    tickets = []
-    for user_id, count in lottery["tickets"].items():
-        tickets.extend([user_id] * count)
+    if giver_data["cowoncy"] < amount:
+        await ctx.send("❌ You don't have enough cowoncy!")
+        return
     
-    try:
-        channel = bot.get_channel(lottery["channel_id"])
-        
-        if tickets:
-            winner_id = random.choice(tickets)
-            lottery["winner"] = winner_id
-            save_db()
-            
-            # Kazanana ödülü ver
-            user_data = get_user_data(int(winner_id))
-            user_data["cowoncy"] += lottery["prize"]
-            add_xp(int(winner_id), lottery["prize"] // 10)
-            save_db()
-            
-            try:
-                winner = await bot.fetch_user(int(winner_id))
-                await channel.send(
-                    f"🎊 **Piyango Kazananı:** {winner.mention}\n"
-                    f"💰 **{lottery['prize']}** cowoncy kazandı! 🎊"
-                )
-            except:
-                await channel.send(f"🎊 Piyango kazananı: <@{winner_id}>")
-        else:
-            await channel.send("😔 Piyangoya katılım olmadı, ödül iade edildi!")
-            
-    except Exception as e:
-        print(f"Piyango sonlandırma hatası: {e}")
+    giver_data["cowoncy"] -= amount
+    receiver_data["cowoncy"] += amount
+    save_db()
+    
+    await ctx.send(f"✅ You gave **{amount}** cowoncy to {member.mention}!")
 
-# ==================== DAVET KONTROL KOMUTU ====================
+# ==================== PROFİL ====================
+@bot.command(name="profile")
+async def profile_command(ctx, member: discord.Member = None):
+    if member is None:
+        member = ctx.author
+    
+    user_data = get_user_data(member.id)
+    current_level_xp = user_data["xp"]
+    needed_xp = get_level_xp(user_data["level"])
+    progress = int((current_level_xp / needed_xp) * 100)
+    
+    bar_length = 15
+    filled = int(bar_length * progress / 100)
+    bar = "█" * filled + "░" * (bar_length - filled)
+    
+    embed = discord.Embed(
+        title=f"👤 {member.display_name}'s Profile",
+        color=0x00ff00
+    )
+    embed.add_field(name="💰 Cowoncy", value=user_data["cowoncy"], inline=True)
+    embed.add_field(name="🏦 Banka", value=user_data["bank"], inline=True)
+    embed.add_field(name="📈 Level", value=user_data["level"], inline=True)
+    embed.add_field(name="⭐ XP", value=f"{current_level_xp}/{needed_xp} ({bar})", inline=False)
+    embed.add_field(name="🎯 Davet", value=user_data.get("invites", 0), inline=True)
+    embed.add_field(name="🎯 Boss Streak", value=user_data["boss_streak"], inline=True)
+    embed.add_field(name="💍 Evli", value="Evet" if user_data["marriage"] else "Hayır", inline=True)
+    embed.add_field(name="📦 Weapon Crates", value=user_data["weapon_crates"], inline=True)
+    
+    await ctx.send(embed=embed)
+
+# ==================== DAVET KOMUTLARI ====================
 @bot.command(name="davetlerim", aliases=["invites"])
 async def my_invites(ctx):
     """Davet sayını göster"""
@@ -645,11 +579,202 @@ async def my_invites(ctx):
     
     await ctx.send(embed=embed)
 
-# ==================== DİĞER KOMUTLAR ====================
-# (Buraya önceki tüm komutlar gelir - blackjack, mines, cf, slots, lottery, highlow, daily, quest, vb.)
-# Kodu kısaltmak için önceki komutlar buraya eklenir...
+@bot.command(name="ödültalep", aliases=["odultalep", "claimreward"])
+async def claim_reward(ctx):
+    """Davet ödülünü talep et"""
+    user_data = get_user_data(ctx.author.id)
+    invites = user_data.get("invites", 0)
+    claimed = user_data.get("invite_claimed", 0)
+    
+    available = invites - claimed
+    
+    if available <= 0:
+        await ctx.send(f"❌ **{ctx.author.display_name}**, talep edebileceğin ödül yok! (Toplam davetin: {invites})")
+        return
+    
+    reward_per_invite = min(50, 10 + (user_data["level"] // 5))
+    total_reward = available * reward_per_invite
+    
+    user_data["cowoncy"] += total_reward
+    user_data["invite_claimed"] = invites
+    add_xp(ctx.author.id, total_reward // 10)
+    save_db()
+    
+    sync_invites_to_panel(ctx.author.id, invites)
+    
+    embed = discord.Embed(
+        title="🎉 Ödül Talep Edildi!",
+        description=f"**{ctx.author.display_name}** ödülünü aldı!",
+        color=0x00ff00
+    )
+    embed.add_field(name="📊 Talep Edilen Davet", value=f"{available} davet", inline=True)
+    embed.add_field(name="💰 Kazanılan Cowoncy", value=f"+{total_reward}", inline=True)
+    embed.add_field(name="⭐ Kazanılan XP", value=f"+{total_reward // 10}", inline=True)
+    embed.add_field(name="📈 Toplam Davet", value=f"{invites}", inline=True)
+    embed.set_footer(text="Her 1 davet = 10-50 cowoncy | Seviyene göre artar!")
+    
+    await ctx.send(embed=embed)
 
-# ==================== YARDIM KOMUTU (GÜNCELLENMİŞ) ====================
+# ==================== ADMIN KOMUTLARI ====================
+@bot.command(name="cekilisbaslat", aliases=["cekilis-baslat"])
+@commands.has_permissions(administrator=True)
+async def start_giveaway(ctx, prize: str, duration: str = None):
+    """Çekiliş başlat: .cekilisbaslat <ödül> <süre>"""
+    if not duration:
+        await ctx.send("❌ Lütfen süre belirtin! Örnek: `.cekilisbaslat 1000 cowoncy 10m`")
+        return
+    
+    time_seconds = 0
+    if duration.endswith('s'):
+        time_seconds = int(duration[:-1])
+    elif duration.endswith('m'):
+        time_seconds = int(duration[:-1]) * 60
+    elif duration.endswith('h'):
+        time_seconds = int(duration[:-1]) * 3600
+    elif duration.endswith('d'):
+        time_seconds = int(duration[:-1]) * 86400
+    else:
+        try:
+            time_seconds = int(duration)
+        except:
+            await ctx.send("❌ Geçersiz süre! Örnek: `10m`, `1h`, `30s`")
+            return
+    
+    if time_seconds < 10:
+        await ctx.send("❌ Süre en az 10 saniye olmalı!")
+        return
+    
+    giveaway_id = f"{ctx.guild.id}_{ctx.channel.id}_{int(datetime.now().timestamp())}"
+    
+    db["giveaways"][giveaway_id] = {
+        "guild_id": ctx.guild.id,
+        "channel_id": ctx.channel.id,
+        "message_id": None,
+        "prize": prize,
+        "duration": time_seconds,
+        "start_time": datetime.now().isoformat(),
+        "end_time": (datetime.now() + timedelta(seconds=time_seconds)).isoformat(),
+        "host": ctx.author.id,
+        "participants": [],
+        "winner": None,
+        "ended": False
+    }
+    save_db()
+    
+    embed = discord.Embed(
+        title="🎉 Çekiliş Başladı!",
+        description=f"**Ödül:** {prize}\n**Katılmak için:** 🎲 tıklayın!",
+        color=0xffd700
+    )
+    embed.add_field(name="⏱️ Süre", value=f"{time_seconds // 60}m {time_seconds % 60}s", inline=True)
+    embed.add_field(name="👤 Başlatan", value=ctx.author.mention, inline=True)
+    embed.add_field(name="📊 Katılımcı", value="0", inline=True)
+    embed.set_footer(text=f"ID: {giveaway_id[:8]}")
+    
+    view = GiveawayView(giveaway_id, ctx)
+    message = await ctx.send(embed=embed, view=view)
+    
+    db["giveaways"][giveaway_id]["message_id"] = message.id
+    save_db()
+    
+    asyncio.create_task(schedule_giveaway_end(giveaway_id))
+
+class GiveawayView(View):
+    def __init__(self, giveaway_id, ctx):
+        super().__init__(timeout=None)
+        self.giveaway_id = giveaway_id
+        self.ctx = ctx
+    
+    @discord.ui.button(label="🎲 Katıl", style=discord.ButtonStyle.success)
+    async def join_button(self, interaction: discord.Interaction, button: Button):
+        giveaway = db["giveaways"].get(self.giveaway_id)
+        if not giveaway or giveaway["ended"]:
+            await interaction.response.send_message("❌ Bu çekiliş sona ermiş!", ephemeral=True)
+            return
+        
+        user_id = str(interaction.user.id)
+        if user_id in giveaway["participants"]:
+            await interaction.response.send_message("❌ Zaten katıldın!", ephemeral=True)
+            return
+        
+        giveaway["participants"].append(user_id)
+        save_db()
+        
+        embed = interaction.message.embeds[0]
+        embed.set_field_at(2, name="📊 Katılımcı", value=str(len(giveaway["participants"])), inline=True)
+        await interaction.message.edit(embed=embed)
+        
+        await interaction.response.send_message("🎉 Çekilişe katıldın! İyi şanslar!", ephemeral=True)
+
+async def schedule_giveaway_end(giveaway_id):
+    giveaway = db["giveaways"].get(giveaway_id)
+    if not giveaway:
+        return
+    
+    end_time = datetime.fromisoformat(giveaway["end_time"])
+    wait_time = (end_time - datetime.now()).total_seconds()
+    
+    if wait_time > 0:
+        await asyncio.sleep(wait_time)
+    
+    await end_giveaway(giveaway_id)
+
+async def end_giveaway(giveaway_id):
+    giveaway = db["giveaways"].get(giveaway_id)
+    if not giveaway or giveaway["ended"]:
+        return
+    
+    giveaway["ended"] = True
+    participants = giveaway["participants"]
+    
+    try:
+        channel = bot.get_channel(giveaway["channel_id"])
+        if channel:
+            message = await channel.fetch_message(giveaway["message_id"])
+        else:
+            return
+    except:
+        return
+    
+    if participants:
+        winner_id = random.choice(participants)
+        giveaway["winner"] = winner_id
+        save_db()
+        
+        try:
+            winner = await bot.fetch_user(int(winner_id))
+            prize = giveaway["prize"]
+            
+            embed = discord.Embed(
+                title="🎉 Çekiliş Sona Erdi!",
+                description=f"**Kazanan:** {winner.mention}\n**Ödül:** {prize}",
+                color=0xffd700
+            )
+            embed.add_field(name="📊 Toplam Katılımcı", value=len(participants), inline=True)
+            
+            await message.edit(embed=embed, view=None)
+            await channel.send(f"🎊 Tebrikler {winner.mention}! **{prize}** kazandın! 🎊")
+            
+            user_data = get_user_data(winner.id)
+            if "cowoncy" in prize.lower():
+                try:
+                    amount = int(''.join(filter(str.isdigit, prize)))
+                    user_data["cowoncy"] += amount
+                    save_db()
+                except:
+                    pass
+            
+        except Exception as e:
+            print(f"Kazanan bildirilirken hata: {e}")
+    else:
+        embed = discord.Embed(
+            title="😔 Çekiliş Sona Erdi",
+            description="Katılımcı olmadığı için kazanan seçilemedi!",
+            color=0xff0000
+        )
+        await message.edit(embed=embed, view=None)
+
+# ==================== YARDIM KOMUTU ====================
 @bot.command(name="yardım", aliases=["help", "yardim"])
 async def help_command(ctx):
     """Tüm komutları gösterir"""
@@ -660,7 +785,6 @@ async def help_command(ctx):
         color=0x00ff00
     )
     
-    # Ana Kategoriler
     embed.add_field(
         name="━━━━━━━━━━━━━━━━━━━━━",
         value="**🎰 OYUN KOMUTLARI**",
@@ -681,35 +805,10 @@ async def help_command(ctx):
         value="Slot makinesi oyna\nÖrnek: `.slots 200`",
         inline=False
     )
-    embed.add_field(
-        name="`.mines <miktar/all> <mayın>`",
-        value="Mayın Tarlası oyna (Butonlu)\nÖrnek: `.mines 1000 3`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.lottery <miktar/all>`",
-        value="Piyango oyna\nÖrnek: `.lottery 50`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.highlow <miktar/all> <high/low>`",
-        value="Yüksek/Düşük oyna\nÖrnek: `.highlow 100 high`",
-        inline=False
-    )
     
     embed.add_field(
         name="━━━━━━━━━━━━━━━━━━━━━",
         value="**📋 GÜNLÜK GÖREVLER**",
-        inline=False
-    )
-    embed.add_field(
-        name="`.quest` veya `.görev`",
-        value="Günlük görevini görüntüle\nHer gün yeni görev!",
-        inline=False
-    )
-    embed.add_field(
-        name="`.claimquest` veya `.ödüial`",
-        value="Görev ödülünü al (Tamamlandıysa)\nMax 5000 cowoncy kazanabilirsin!",
         inline=False
     )
     embed.add_field(
@@ -744,16 +843,6 @@ async def help_command(ctx):
         value="Çekiliş başlat\nÖrnek: `.cekilisbaslat 1000 cowoncy 10m`",
         inline=False
     )
-    embed.add_field(
-        name="`.piyangobaslat <ödül>`",
-        value="Piyango başlat\nÖrnek: `.piyangobaslat 5000`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.etkinlikbaslat <cowoncy> <invite>`",
-        value="Etkinlik başlat\nÖrnek: `.etkinlikbaslat 1000 5`",
-        inline=False
-    )
     
     embed.add_field(
         name="━━━━━━━━━━━━━━━━━━━━━",
@@ -770,16 +859,6 @@ async def help_command(ctx):
         value="Başkasına cowoncy gönder\nÖrnek: `.give @Ahmet 100`",
         inline=False
     )
-    embed.add_field(
-        name="`.shop`",
-        value="Mağazayı görüntüle",
-        inline=False
-    )
-    embed.add_field(
-        name="`.buy <ürün>`",
-        value="Mağazadan ürün satın al\nÜrünler: common, uncommon, rare, epic, legendary",
-        inline=False
-    )
     
     embed.add_field(
         name="━━━━━━━━━━━━━━━━━━━━━",
@@ -791,44 +870,7 @@ async def help_command(ctx):
         value="Profilini görüntüle\nÖrnek: `.profile @kişi`",
         inline=False
     )
-    embed.add_field(
-        name="`.xp`",
-        value="XP ve level durumunu göster",
-        inline=False
-    )
-    embed.add_field(
-        name="`.top`",
-        value="Küresel sıralamayı göster\nÖrnek: `.top level` (Level sıralaması)",
-        inline=False
-    )
     
-    embed.add_field(
-        name="━━━━━━━━━━━━━━━━━━━━━",
-        value="**💍 SOSYAL KOMUTLAR**",
-        inline=False
-    )
-    embed.add_field(
-        name="`.marry <@kişi>`",
-        value="Evlenme teklifi et\nÖrnek: `.marry @Ayşe`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.hug`, `.kiss`, `.pat`",
-        value="Sarılmak, öpmek veya okşamak\nÖrnek: `.hug @kişi`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.blush`, `.cry`, `.dance`",
-        value="Duygu ifadeleri kullan\nÖrnek: `.dance`",
-        inline=False
-    )
-    embed.add_field(
-        name="`.happy`, `.smile`",
-        value="Mutlu veya gülümse\nÖrnek: `.happy`",
-        inline=False
-    )
-    
-    # Owner komutları (sadece sahibine göster)
     if ctx.author.id == OWNER_ID:
         embed.add_field(
             name="━━━━━━━━━━━━━━━━━━━━━",
@@ -845,23 +887,49 @@ async def help_command(ctx):
             value="Kişiye XP ver\nÖrnek: `.xpver @Ahmet 500`",
             inline=False
         )
-        embed.add_field(
-            name="`.resetquest <@kişi>`",
-            value="Kişinin görevini sıfırla\nÖrnek: `.resetquest @Ahmet`",
-            inline=False
-        )
-        embed.add_field(
-            name="`.setquest <@kişi> <tip> <hedef> <ödül>`",
-            value="Özel görev oluştur\nTipler: bj, cf, slots, mines, lottery, highlow, hug, kiss\nÖrnek: `.setquest @Ahmet bj 5 1000`",
-            inline=False
-        )
     
     embed.set_footer(
-        text="Arigato Bot v3.0 | Davet sistemi & Çekilişler & Etkinlikler!",
+        text="Arigato Bot v3.0 | Davet sistemi & Çekilişler!",
         icon_url=ctx.author.avatar.url if ctx.author.avatar else None
     )
     
     await ctx.send(embed=embed)
+
+# ==================== OWNER KOMUTLARI ====================
+@bot.command(name="paragonder")
+async def send_money(ctx, member: discord.Member, amount: int):
+    if ctx.author.id != OWNER_ID:
+        await ctx.send("❌ This command is only for the bot owner!")
+        return
+    
+    if amount < 1:
+        await ctx.send("❌ You must give at least 1 cowoncy!")
+        return
+    
+    user_data = get_user_data(member.id)
+    user_data["cowoncy"] += amount
+    save_db()
+    
+    await ctx.send(f"✅ {member.mention} has received {amount} cowoncy! New balance: {user_data['cowoncy']}")
+
+@bot.command(name="xpver")
+async def give_xp(ctx, member: discord.Member, amount: int):
+    if ctx.author.id != OWNER_ID:
+        await ctx.send("❌ This command is only for the bot owner!")
+        return
+    
+    if amount < 1:
+        await ctx.send("❌ You must give at least 1 XP!")
+        return
+    
+    leveled_up = add_xp(member.id, amount)
+    user_data = get_user_data(member.id)
+    
+    msg = f"✅ {member.mention} has received {amount} XP! (Level: {user_data['level']})"
+    if leveled_up:
+        msg += f"\n🎉 **LEVEL UP!** New level: {user_data['level']} (Bonus: {user_data['level'] * 100} cowoncy!)"
+    
+    await ctx.send(msg)
 
 # ==================== MESAJ OLAYI ====================
 @bot.event
@@ -871,10 +939,6 @@ async def on_message(message):
     
     user_data = get_user_data(message.author.id)
     user_data["message_count"] += 1
-    
-    # Mesaj gönderme görevi için
-    if user_data.get("quest") and user_data["quest"]["command"] == "message":
-        check_quest_progress(message.author.id, "message", 1)
     
     xp_gain = random.randint(5, 15)
     leveled_up = add_xp(message.author.id, xp_gain)
@@ -898,6 +962,8 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ Geçersiz argüman! `.yardım` yazarak doğru kullanımı öğrenebilirsin.")
     elif isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Bu komutu kullanmak için yeterli yetkin yok! (Admin gerekiyor)")
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"❌ Komut bekleme süresinde! {round(error.retry_after)} saniye sonra tekrar dene.")
     else:
         print(f"Hata: {error}")
         await ctx.send(f"❌ Bir hata oluştu: {str(error)[:100]}")
@@ -909,8 +975,20 @@ async def on_ready():
     print(f"📊 {len(db['users'])} kullanıcı yüklendi!")
     print(f"👑 Bot sahibi ID: {OWNER_ID}")
     print(f"💰 Max 'all' bahis: {MAX_ALL_BET}")
-    print(f"🎯 {len(db['giveaways'])} aktif çekiliş")
-    print(f"🎪 {len(db['events'])} aktif etkinlik")
+    
+    # Eksik anahtarları kontrol et
+    if 'giveaways' not in db:
+        db['giveaways'] = {}
+    if 'events' not in db:
+        db['events'] = {}
+    if 'lotteries' not in db:
+        db['lotteries'] = {}
+    save_db()
+    
+    print(f"🎯 {len(db.get('giveaways', {}))} aktif çekiliş")
+    print(f"🎪 {len(db.get('events', {}))} aktif etkinlik")
+    print(f"🎰 {len(db.get('lotteries', {}))} aktif piyango")
+    
     await bot.change_presence(activity=discord.Game(name=".yardım | Arigato Bot v3.0"))
 
 # Bot'u çalıştır
