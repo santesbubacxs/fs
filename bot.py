@@ -3,7 +3,7 @@ from discord.ui import Button, View, Modal, TextInput
 import requests
 
 # --- BOT AYARLARI ---
-TOKEN = "YOUR_BOT_TOKEN_HERE"  # Discord Bot Token'ınızı buraya yazın
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Discord Bot Token'ınızı buraya yazın
 TARGET_CHANNEL_ID = 1527272715130769578  # Botun paneli göndereceği kanal ID'si
 
 intents = discord.Intents.default()
@@ -120,4 +120,4 @@ async def on_ready():
     await channel.send(embed=embed, view=PanelView())
 
 # Botu çalıştır
-client.run(TOKEN)
+client.run(BOT_TOKEN)
