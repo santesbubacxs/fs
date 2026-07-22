@@ -1,6 +1,7 @@
 import discord
 from discord.ui import Button, View, Modal, TextInput
 import requests
+import os
 
 # --- BOT AYARLARI ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # Discord Bot Token'ınızı buraya yazın
