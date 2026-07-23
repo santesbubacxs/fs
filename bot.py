@@ -9,19 +9,28 @@ import os
 import requests
 from dotenv import load_dotenv
 
-# .env dosyasını yükle (sadece BOT_TOKEN ve OWNER_ID için)
+# .env dosyasını yükle
 load_dotenv()
 
-# Bot ayarları - sadece .env'den al
+# Bot ayarları - .env'den al
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 OWNER_ID = int(os.getenv('OWNER_ID', 1480666761438429447))
 
-# Sabitler (direkt kod içinde)
+# Sabitler
 MAX_ALL_BET = 250000
 WEBHOOK_URL = 'https://arigato.great-site.net/webhook.php'
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN .env dosyasında bulunamadı!")
+
+# ==================== PYTHON 3.13 FIX ====================
+# audioop modülü Python 3.13'te kaldırıldı, voice özelliklerini devre dışı bırak
+import discord.voice_client
+import discord.player
+
+# Voice özelliklerini pasifleştir
+discord.voice_client.VoiceClient = None
+discord.player.AudioPlayer = None
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='.', intents=intents, help_command=None)
