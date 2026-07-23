@@ -23,16 +23,22 @@ WEBHOOK_URL = 'https://arigato.great-site.net/webhook.php'
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN .env dosyasında bulunamadı!")
 
-# ==================== PYTHON 3.13 FIX ====================
-# audioop modülü Python 3.13'te kaldırıldı, voice özelliklerini devre dışı bırak
+# ==================== VOICE ÖZELLİKLERİNİ TAMAMEN KALDIR ====================
+# audioop hatasını engellemek için voice ile ilgili tüm özellikleri devre dışı bırak
 import discord.voice_client
 import discord.player
 
-# Voice özelliklerini pasifleştir
+# Voice client ve player'ı None yap
 discord.voice_client.VoiceClient = None
 discord.player.AudioPlayer = None
+discord.player.AudioSource = None
 
-intents = discord.Intents.all()
+# Intents - voice gerekmiyor
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix='.', intents=intents, help_command=None)
 
 # Veritabanı
